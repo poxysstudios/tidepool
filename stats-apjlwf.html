@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Tidepool Players</title>
+<style>
+  :root {
+    --bg: #0c2328; --card: #113239; --line: rgba(246,239,226,0.12);
+    --cream: #f6efe2; --dim: rgba(246,239,226,0.62); --faint: rgba(246,239,226,0.16);
+    --gold: #f1c86b; --mint: #86d4b3; --bar: #83c8bb; --barDim: rgba(131,200,187,0.35);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--cream); font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 28px 16px 48px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 22px; }
+  h1 { font: 600 26px/1.1 Georgia, "Times New Roman", serif; margin: 0; }
+  .status { font-size: 13px; color: var(--dim); display: flex; align-items: center; gap: 7px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+  .dot.ok { background: var(--mint); box-shadow: 0 0 0 0 rgba(134,212,179,0.6); animation: pulse 2s infinite; }
+  .dot.err { background: #ec8b6e; }
+  @keyframes pulse { 70% { box-shadow: 0 0 0 9px rgba(134,212,179,0); } 100% { box-shadow: 0 0 0 0 rgba(134,212,179,0); } }
+  .hero { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 22px; padding: 18px 20px; }
+  .label { font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--dim); font-weight: 700; }
+  .big { font: 600 54px/1.05 Georgia, "Times New Roman", serif; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .live .big { color: var(--gold); }
+  .small { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
+  .small .big { font-size: 30px; }
+  h2 { font-size: 13px; letter-spacing: 1.6px; text-transform: uppercase; color: var(--dim); margin: 28px 4px 10px; }
+  svg { display: block; width: 100%; height: auto; }
+  svg text { fill: var(--dim); font-size: 11px; font-family: inherit; }
+  .note { margin-top: 26px; font-size: 13px; color: var(--dim); }
+  .setup { border-color: rgba(241,200,107,0.4); }
+  .setup b { color: var(--gold); }
+  .tip { position: fixed; pointer-events: none; background: #0a1b1f; border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; font-size: 13px; display: none; }
+  @media (max-width: 520px) {
+    .big { font-size: 42px; }
+    .small { grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+    .small .card { padding: 14px 12px; }
+    .small .big { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Tidepool players</h1>
+    <div class="status"><span class="dot" id="dot"></span><span id="status">Connecting…</span></div>
+  </header>
+
+  <div id="setup" class="card setup" hidden>
+    <b>Not connected yet.</b> Fill in <code>SUPABASE_URL</code> and <code>SUPABASE_KEY</code> near the bottom of this file.
+  </div>
+
+  <section class="hero">
+    <div class="card live"><div class="label">Playing now</div><div class="big" id="live">–</div></div>
+    <div class="card"><div class="label">Total players</div><div class="big" id="total">–</div></div>
+  </section>
+  <section class="small">
+    <div class="card"><div class="label">Today</div><div class="big" id="today">–</div></div>
+    <div class="card"><div class="label">New today</div><div class="big" id="newToday">–</div></div>
+    <div class="card"><div class="label">Last 7 days</div><div class="big" id="week">–</div></div>
+  </section>
+
+  <h2>Players per day (last 30 days)</h2>
+  <div class="card"><svg id="days" viewBox="0 0 700 200" role="img" aria-label="Players per day"></svg></div>
+
+  <h2>Furthest set reached</h2>
+  <div class="card"><svg id="sets" viewBox="0 0 700 200" role="img" aria-label="Players by furthest set"></svg></div>
+
+  <p class="note">"Playing now" counts anyone with the game open in the last 3 minutes. Counts are anonymous and approximate: reinstalling the app counts as a new player. Refreshes every 10 seconds.</p>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+// ---- fill these in (same values as src/presence.ts) ----
+const SUPABASE_URL = 'https://nvvoaywovjlnboqlbzgm.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_OfKFEITrZ3NlGDqw6q2JkA_j39Co9FQ';
+// --------------------------------------------------------
+
+const SETS = ['Still Water','Stepping Stones','Painted Pebbles','Lily Pads','Reed Beds','Currents','Whirlpools','Twin Wells','Song Pools','The Deep'];
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => Number(n || 0).toLocaleString('en-GB');
+const tip = $('tip');
+
+function bars(svg, items, opts) {
+  const W = 700, H = 200, padL = 34, padB = 26, padT = 10;
+  const max = Math.max(1, ...items.map((d) => d.v));
+  const step = niceStep(max);
+  const top = Math.ceil(max / step) * step;
+  const n = items.length, gap = opts.gap, bw = (W - padL - gap * (n - 1)) / n;
+  let out = '';
+  for (let y = 0; y <= top; y += step) {
+    const py = padT + (H - padT - padB) * (1 - y / top);
+    out += `<line x1="${padL}" x2="${W}" y1="${py}" y2="${py}" stroke="rgba(246,239,226,0.08)"/>`;
+    out += `<text x="${padL - 6}" y="${py + 4}" text-anchor="end">${fmt(y)}</text>`;
+  }
+  items.forEach((d, i) => {
+    const x = padL + i * (bw + gap);
+    const h = (H - padT - padB) * (d.v / top);
+    const y = H - padB - h;
+    out += `<rect x="${x}" y="${y}" width="${bw}" height="${Math.max(h, d.v ? 2 : 0)}" rx="${Math.min(4, bw / 3)}" fill="${d.hi ? 'var(--gold)' : 'var(--bar)'}" data-tip="${d.tip}"/>`;
+    out += `<rect x="${x}" y="${padT}" width="${bw}" height="${H - padT - padB}" fill="transparent" data-tip="${d.tip}"/>`;
+    if (d.label) out += `<text x="${x + bw / 2}" y="${H - 8}" text-anchor="middle">${d.label}</text>`;
+  });
+  svg.innerHTML = out;
+}
+function niceStep(max) {
+  const raw = max / 4, p = Math.pow(10, Math.floor(Math.log10(raw)));
+  for (const m of [1, 2, 5, 10]) if (raw <= m * p) return Math.max(1, m * p);
+  return Math.max(1, 10 * p);
+}
+document.addEventListener('mousemove', (e) => {
+  const t = e.target.closest && e.target.closest('[data-tip]');
+  if (!t) { tip.style.display = 'none'; return; }
+  tip.textContent = t.getAttribute('data-tip');
+  tip.style.display = 'block';
+  tip.style.left = Math.min(window.innerWidth - tip.offsetWidth - 8, e.clientX + 12) + 'px';
+  tip.style.top = (e.clientY - 36) + 'px';
+});
+
+function render(s) {
+  $('live').textContent = fmt(s.live);
+  $('total').textContent = fmt(s.total);
+  $('today').textContent = fmt(s.today);
+  $('newToday').textContent = fmt(s.new_today);
+  $('week').textContent = fmt(s.week);
+  const days = s.days || [];
+  bars($('days'), days.map((d, i) => {
+    const dt = new Date(d.day + 'T12:00:00');
+    const name = dt.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    return { v: d.players, hi: i === days.length - 1, tip: `${name}: ${fmt(d.players)} players`, label: i % 5 === 4 || i === days.length - 1 ? name : '' };
+  }), { gap: 4 });
+  bars($('sets'), (s.sets || []).map((d) => ({ v: d.players, tip: `Set ${d.set}, ${SETS[d.set - 1]}: ${fmt(d.players)} players`, label: String(d.set) })), { gap: 10 });
+}
+
+async function refresh() {
+  if (!SUPABASE_URL || !SUPABASE_KEY) { $('setup').hidden = false; $('status').textContent = 'Not connected'; return; }
+  try {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/player_stats`, { method: 'POST', headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' }, body: '{}' });
+    if (!r.ok) throw new Error(r.status + ' ' + (await r.text()).slice(0, 120));
+    render(await r.json());
+    $('dot').className = 'dot ok';
+    $('status').textContent = 'Live · ' + new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch (e) {
+    $('dot').className = 'dot err';
+    $('status').textContent = 'Can’t reach the database, retrying';
+    console.error(e);
+  }
+}
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>
